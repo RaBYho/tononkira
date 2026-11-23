@@ -55,24 +55,28 @@ Search lyrics from tononkira.serasera.org
 async fn main() -> Result<(), surf::Error> {
     let matches = cli().get_matches();
 
-    let is_artist_search = matches.get_one::<String>("artist").is_some();
-    let is_title_search = matches.get_one::<String>("title").is_some();
-    let is_lyrics_search = matches.get_one::<String>("lyrics").is_some();
+    let artist = matches.value_of("artist").map(|s| s.to_string());
+    let title = matches.value_of("title").map(|s| s.to_string());
+    let lyrics_param = matches.value_of("lyrics").map(|s| s.to_string());
+
+    let is_artist_search = artist.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let is_title_search = title.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let is_lyrics_search = lyrics_param.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
 
     let keywords = matches.value_of("keywords").unwrap_or("");
     let options = Options {
         is_artist_search,
         is_title_search,
         is_lyrics_search,
-        artist: Some(matches.value_of("artist").unwrap_or("").to_string()),
-        title: Some(matches.value_of("title").unwrap_or("").to_string()),
-        lyrics: Some(matches.value_of("lyrics").unwrap_or("").to_string()),
+        artist,
+        title,
+        lyrics: lyrics_param,
     };
 
     let parser = Parser::new();
     let lyrics = parser.search(keywords, options).await?;
 
-    if lyrics.len() == 0 {
+    if lyrics.is_empty() {
         println!("No lyrics found");
         return Ok(());
     }
