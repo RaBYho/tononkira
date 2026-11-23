@@ -35,6 +35,18 @@ impl Parser {
         keywords: &str,
         options: Options,
     ) -> Result<Vec<Lyrics>, surf::Error> {
+        let kw_trimmed = keywords.trim();
+
+        // If direct URL is provided, fetch lyrics directly
+        if kw_trimmed.starts_with("http://")
+            || kw_trimmed.starts_with("https://")
+            || kw_trimmed.starts_with("/hira/")
+        {
+            if let Ok(single) = self.fetch_song_by_url(kw_trimmed).await {
+                return Ok(vec![single]);
+            }
+        }
+
         let mut paths: Vec<String> = Vec::new();
 
         let has_artist = options.is_artist_search && options.artist.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
@@ -62,10 +74,39 @@ impl Parser {
                 "/hira?tononkira={}",
                 encode(options.lyrics.as_deref().unwrap_or(""))
             ));
-        } else if !keywords.trim().is_empty() {
-            // General keywords: search both by song title and by artist
-            paths.push(format!("/hira?lohateny={}", encode(keywords.trim())));
-            paths.push(format!("/hira?mpihira={}", encode(keywords.trim())));
+        } else if !kw_trimmed.is_empty() {
+            // General keywords: support "Artist - Title", "Word1 Word2", or general search
+            if kw_trimmed.contains(" - ") {
+                let parts: Vec<&str> = kw_trimmed.split(" - ").collect();
+                if parts.len() == 2 {
+                    paths.push(format!(
+                        "/hira?lohateny={}&mpihira={}",
+                        encode(parts[1].trim()),
+                        encode(parts[0].trim())
+                    ));
+                    paths.push(format!(
+                        "/hira?lohateny={}&mpihira={}",
+                        encode(parts[0].trim()),
+                        encode(parts[1].trim())
+                    ));
+                }
+            } else {
+                let words: Vec<&str> = kw_trimmed.split_whitespace().collect();
+                if words.len() == 2 {
+                    paths.push(format!(
+                        "/hira?lohateny={}&mpihira={}",
+                        encode(words[1]),
+                        encode(words[0])
+                    ));
+                    paths.push(format!(
+                        "/hira?lohateny={}&mpihira={}",
+                        encode(words[0]),
+                        encode(words[1])
+                    ));
+                }
+            }
+            paths.push(format!("/hira?lohateny={}", encode(kw_trimmed)));
+            paths.push(format!("/hira?mpihira={}", encode(kw_trimmed)));
         } else {
             paths.push("/hira".to_string());
         }
@@ -113,6 +154,58 @@ impl Parser {
         }
 
         Ok(lyrics)
+    }
+
+    pub async fn fetch_song_by_url(&self, url: &str) -> Result<Lyrics, surf::Error> {
+        let clean_link = if let Some(stripped) = url.strip_prefix("https://tononkira.serasera.org") {
+            stripped
+        } else if let Some(stripped) = url.strip_prefix("http://tononkira.serasera.org") {
+            stripped
+        } else {
+            url
+        };
+        let path = if clean_link.starts_with('/') {
+            clean_link.to_string()
+        } else {
+            format!("/{}", clean_link)
+        };
+
+        let page = self.client.get(&path).recv_string().await?;
+        let document = Html::parse_document(&page);
+
+        let mut artist = String::new();
+        let mut title = String::new();
+
+        let h2_selector = Selector::parse("h2").unwrap();
+        let a_selector = Selector::parse("a").unwrap();
+
+        if let Some(h2) = document.select(&h2_selector).next() {
+            if let Some(a) = h2.select(&a_selector).next() {
+                artist = a.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            }
+            let full_text = h2.text().collect::<Vec<_>>().join(" ");
+            let clean_title = full_text.split('(').next().unwrap_or("").trim().to_string();
+            if !clean_title.is_empty() {
+                title = clean_title;
+            }
+        }
+
+        if title.is_empty() {
+            title = "Tononkira".to_string();
+        }
+        if artist.is_empty() {
+            artist = "Mpihira".to_string();
+        }
+
+        let lines = self.parse_lyrics(url).await?;
+
+        Ok(Lyrics {
+            artist,
+            title,
+            artist_url: String::new(),
+            title_url: url.to_string(),
+            lines,
+        })
     }
 
     pub async fn parse_artist_and_title(

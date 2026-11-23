@@ -1,4 +1,4 @@
-use clap::{arg, Arg, Command};
+use clap::{Arg, Command};
 use colored_json::ToColoredJson;
 use tabled::{Style, Table};
 use tononkira::{colorizer::print_colorized, parser::Parser, types::Options};
@@ -21,32 +21,45 @@ Search lyrics from tononkira.serasera.org
 "#,
         )
         .arg(
-            arg!(
-                -a --artist [value] "song's artist"
-            )
-            .required(false),
+            Arg::new("artist")
+                .short('a')
+                .long("artist")
+                .help("song's artist")
+                .takes_value(true)
+                .multiple_values(true)
+                .required(false),
         )
         .arg(
-            arg!(
-                -t --title [value] "song's title"
-            )
-            .required(false),
+            Arg::new("title")
+                .short('t')
+                .long("title")
+                .help("song's title")
+                .takes_value(true)
+                .multiple_values(true)
+                .required(false),
         )
         .arg(
-            arg!(
-                -l --lyrics [value] "song's lyrics"
-            )
-            .required(false),
+            Arg::new("lyrics")
+                .short('l')
+                .long("lyrics")
+                .help("song's lyrics")
+                .takes_value(true)
+                .multiple_values(true)
+                .required(false),
         )
         .arg(
-            arg!(
-                -j --json ... "output in json format"
-            )
-            .required(false),
+            Arg::new("json")
+                .short('j')
+                .long("json")
+                .help("output in json format")
+                .takes_value(false)
+                .required(false),
         )
         .arg(
-            Arg::with_name("keywords")
-                .help("The song's title or artist")
+            Arg::new("keywords")
+                .help("The song's title, artist or URL")
+                .takes_value(true)
+                .multiple_values(true)
                 .required(false),
         )
 }
@@ -55,15 +68,25 @@ Search lyrics from tononkira.serasera.org
 async fn main() -> Result<(), surf::Error> {
     let matches = cli().get_matches();
 
-    let artist = matches.value_of("artist").map(|s| s.to_string());
-    let title = matches.value_of("title").map(|s| s.to_string());
-    let lyrics_param = matches.value_of("lyrics").map(|s| s.to_string());
+    let artist = matches
+        .values_of("artist")
+        .map(|vals| vals.collect::<Vec<_>>().join(" "));
+    let title = matches
+        .values_of("title")
+        .map(|vals| vals.collect::<Vec<_>>().join(" "));
+    let lyrics_param = matches
+        .values_of("lyrics")
+        .map(|vals| vals.collect::<Vec<_>>().join(" "));
 
     let is_artist_search = artist.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
     let is_title_search = title.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
     let is_lyrics_search = lyrics_param.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
 
-    let keywords = matches.value_of("keywords").unwrap_or("");
+    let keywords = matches
+        .values_of("keywords")
+        .map(|vals| vals.collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+
     let options = Options {
         is_artist_search,
         is_title_search,
@@ -74,7 +97,7 @@ async fn main() -> Result<(), surf::Error> {
     };
 
     let parser = Parser::new();
-    let lyrics = parser.search(keywords, options).await?;
+    let lyrics = parser.search(&keywords, options).await?;
 
     if lyrics.is_empty() {
         println!("No lyrics found");
@@ -86,12 +109,12 @@ async fn main() -> Result<(), surf::Error> {
             "{}",
             serde_json::to_string(&lyrics)?.to_colored_json_auto()?
         );
+    } else if lyrics.len() == 1 {
+        print_colorized(&lyrics[0]);
     } else {
-        if lyrics.len() == 1 {
-            print_colorized(&lyrics[0]);
-        } else {
-            println!("\n{}", Table::new(&lyrics).with(Style::psql()));
-        }
+        println!("\n{}", Table::new(&lyrics).with(Style::psql()));
+        println!("\n💡 Astuce: Pour afficher les paroles d'une chanson, tapez :");
+        println!("   tononkira -a \"<artiste>\" -t \"<titre>\"");
     }
 
     Ok(())
